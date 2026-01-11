@@ -1,5 +1,5 @@
-import json
 import os
+import json
 import requests
 from telegram import (
     Update,
@@ -7,7 +7,7 @@ from telegram import (
     InlineKeyboardMarkup,
 )
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
@@ -16,7 +16,8 @@ from telegram.ext import (
 # ========= НАСТРОЙКИ =========
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CLASH_API_TOKEN = os.getenv("CLASH_API_TOKEN")
-CLAN_TAG = "GQUJGVG0"  # без #
+
+CLAN_TAG = "GQUJGVG0"  # ⚠️ БЕЗ #, с НУЛЁМ (0)
 MAX_DECKS = 4
 LINKS_FILE = "links.json"
 # =============================
@@ -25,14 +26,14 @@ HEADERS = {
     "Authorization": f"Bearer {CLASH_API_TOKEN}"
 }
 
-# ---------- utils ----------
-def reply(update: Update, text: str, **kwargs):
+# ---------- универсальный ответ ----------
+async def reply(update: Update, text: str, **kwargs):
     if update.message:
-        return update.message.reply_text(text, **kwargs)
-    if update.callback_query:
-        return update.callback_query.message.reply_text(text, **kwargs)
+        await update.message.reply_text(text, **kwargs)
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(text, **kwargs)
 
-# ---------- files ----------
+# ---------- работа с файлами ----------
 def load_links():
     if not os.path.exists(LINKS_FILE):
         return {}
@@ -43,14 +44,14 @@ def save_links(data):
     with open(LINKS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ---------- Clash API ----------
+# ---------- Clash Royale API ----------
 def get_current_war():
     url = f"https://api.clashroyale.com/v1/clans/%23{CLAN_TAG}/currentriverrace"
     r = requests.get(url, headers=HEADERS, timeout=10)
     r.raise_for_status()
     return r.json()
 
-# ---------- keyboard ----------
+# ---------- клавиатура ----------
 def main_keyboard():
     return InlineKeyboardMarkup([
         [
@@ -71,25 +72,25 @@ async def link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await reply(
             update,
-            "Использование:\n/link НикВИгре\n\nПример:\n/link Ivan",
+            "🔗 Использование:\n/link НикВИгре\n\nПример:\n/link Ivan",
             reply_markup=main_keyboard()
         )
         return
 
-    cr_name = " ".join(context.args)
     tg_user = update.effective_user.username
-
     if not tg_user:
-        await reply(update, "❌ У тебя нет @username")
+        await reply(update, "❌ У тебя нет Telegram username")
         return
 
+    cr_name = " ".join(context.args)
     links = load_links()
     links[cr_name] = f"@{tg_user}"
     save_links(links)
 
     await reply(
         update,
-        f"✅ Привязано:\n{cr_name} → @{tg_user}",
+        f"✅ Привязано:\n<b>{cr_name}</b> → @{tg_user}",
+        parse_mode="HTML",
         reply_markup=main_keyboard()
     )
 
@@ -124,7 +125,9 @@ async def war(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for p in participants:
             used = p["decksUsedToday"]
-            total_left += MAX_DECKS - used
+            left = MAX_DECKS - used
+            total_left += left
+
             name = links.get(p["name"], p["name"])
 
             if used == 4:
@@ -156,11 +159,11 @@ async def war(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_keyboard()
         )
 
-    except requests.exceptions.HTTPError as e:
-        await reply(update, "❌ API отказал в доступе (403)\nПроверь IP и API-ключ")
+    except Exception as e:
+        await reply(update, "❌ Ошибка получения данных войны")
         print(e)
 
-# ---------- buttons ----------
+# ---------- кнопки ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -168,13 +171,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "war":
         await war(update, context)
     elif q.data == "link_help":
-        await reply(update, "🔗 /link НикВИгре")
+        await reply(update, "🔗 /link НикВИгре", reply_markup=main_keyboard())
     elif q.data == "unlink":
         await unlink(update, context)
 
-# ---------- start ----------
+# ---------- main ----------
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("link", link))
@@ -183,7 +186,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
 
     print("🤖 Бот запущен")
-    app.run_polling()
+    app.run_polling(close_loop=False)
 
 if __name__ == "__main__":
     main()
